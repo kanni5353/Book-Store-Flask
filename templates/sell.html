@@ -47,7 +47,7 @@
                                     <div class="col-md-3 mb-2">
                                         <label class="form-label small">Book ID *</label>
                                         <input type="text" name="book_id[]" class="form-control book-id-input" 
-                                               placeholder="Book ID" required onblur="fetchBookDetails(this)" list="bookList">
+                                               placeholder="Book ID" required onchange="fetchBookDetails(this)" list="bookList">
                                         <datalist id="bookList">
                                             {% for book in books %}
                                             <option value="{{ book.Bookid }}">{{ book.BookName }}</option>
@@ -200,7 +200,7 @@ function addBookRow() {
             <div class="col-md-3 mb-2">
                 <label class="form-label small">Book ID *</label>
                 <input type="text" name="book_id[]" class="form-control book-id-input" 
-                       placeholder="Book ID" required onblur="fetchBookDetails(this)" list="bookList">
+                       placeholder="Book ID" required onchange="fetchBookDetails(this)" list="bookList">
             </div>
             <div class="col-md-3 mb-2">
                 <label class="form-label small">Book Name</label>
@@ -247,14 +247,25 @@ function fetchBookDetails(input) {
     if (!bookId) return;
     
     const row = input.closest('.book-row');
+    const nameInput = row.querySelector('.book-name-display');
+    const priceInput = row.querySelector('.price-display');
+    
+    // Show loading state
+    nameInput.value = 'Loading...';
+    priceInput.value = '...';
     
     // Fetch book details via AJAX
     fetch(`/api/book/${bookId}`)
-        .then(response => response.json())
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Book not found');
+            }
+            return response.json();
+        })
         .then(data => {
             if (data.success) {
-                row.querySelector('.book-name-display').value = data.book_name;
-                row.querySelector('.price-display').value = data.price;
+                nameInput.value = data.book_name;
+                priceInput.value = data.price;
                 
                 // Show stock warning if low
                 if (data.available_quantity < 10) {
@@ -264,15 +275,17 @@ function fetchBookDetails(input) {
                 calculateTotal();
             } else {
                 alert(data.message || 'Book not found');
+                nameInput.value = '';
+                priceInput.value = '';
                 input.value = '';
-                row.querySelector('.book-name-display').value = '';
-                row.querySelector('.price-display').value = '';
-                calculateTotal();
             }
         })
         .catch(error => {
             console.error('Error:', error);
-            alert('Error fetching book details. Please try again.');
+            alert('Error fetching book details. Please check Book ID.');
+            nameInput.value = '';
+            priceInput.value = '';
+            input.value = '';
         });
 }
 

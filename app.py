@@ -174,7 +174,7 @@ def init_db():
             )
         """)
         
-        # Create Sales table
+        # Create Sales table with transaction_id
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS Sales (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -191,23 +191,31 @@ def init_db():
             )
         """)
         
-        # Migrate existing records without transaction_id
-        cursor.execute("""
-            SELECT COUNT(*) FROM information_schema.COLUMNS 
-            WHERE TABLE_SCHEMA = DATABASE() 
-            AND TABLE_NAME = 'Sales' 
-            AND COLUMN_NAME = 'transaction_id'
-        """)
-        column_exists = cursor.fetchone()[0] > 0
+        # Check if transaction_id column exists in existing Sales table
+        cursor.execute("SHOW COLUMNS FROM Sales LIKE 'transaction_id'")
+        result = cursor.fetchone()
         
-        if column_exists:
-            # Update existing records that have NULL or empty transaction_id
+        # If transaction_id doesn't exist, add it
+        if not result:
+            print("Adding transaction_id column to Sales table...")
+            cursor.execute("""
+                ALTER TABLE Sales 
+                ADD COLUMN transaction_id VARCHAR(50) NOT NULL DEFAULT '' AFTER id
+            """)
+            
+            # Add index for transaction_id
+            cursor.execute("""
+                ALTER TABLE Sales 
+                ADD INDEX idx_transaction (transaction_id)
+            """)
+            
+            # Update existing records with legacy transaction IDs
             cursor.execute("""
                 UPDATE Sales 
-                SET transaction_id = CONCAT('TXN-LEGACY-', id) 
-                WHERE transaction_id IS NULL OR transaction_id = ''
+                SET transaction_id = CONCAT('TXN-LEGACY-', LPAD(id, 6, '0'))
+                WHERE transaction_id = '' OR transaction_id IS NULL
             """)
-            conn.commit()
+            print("Transaction ID column added successfully.")
         
         conn.commit()
         print("Database tables initialized successfully.")
@@ -391,7 +399,7 @@ def sell():
             return redirect(url_for('sell'))
         
         # Generate unique transaction ID
-        transaction_id = f"TXN-{datetime.now().strftime('%Y%m%d')}-{random.randint(1000, 9999)}"
+        transaction_id = f"TXN-{datetime.now().strftime('%Y%m%d%H%M%S')}-{random.randint(1000, 9999)}"
         
         if not conn:
             flash('Database connection error. Please try again.', 'error')
