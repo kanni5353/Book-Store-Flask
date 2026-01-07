@@ -1,14 +1,38 @@
-from flask import Flask, render_template, request, redirect, url_for, flash, session
+from flask import Flask, render_template, request, redirect, url_for, flash, session, jsonify
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 import mysql.connector
 from mysql.connector import Error
 from config import Config
 import sys
+import os
+import time
+import logging
+from logging.handlers import RotatingFileHandler
+from urllib.parse import urlparse
 
 # Initialize Flask app
 app = Flask(__name__)
-app.config.from_object(Config)
+
+# Load configuration based on environment
+env = os.getenv('FLASK_ENV', 'development')
+if env == 'production':
+    app.config.from_object('config.ProductionConfig')
+else:
+    app.config.from_object('config.DevelopmentConfig')
+
+# Configure logging
+if not app.debug:
+    if not os.path.exists('logs'):
+        os.mkdir('logs')
+    file_handler = RotatingFileHandler('logs/bookstore.log', maxBytes=10240, backupCount=10)
+    file_handler.setFormatter(logging.Formatter(
+        '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
+    ))
+    file_handler.setLevel(logging.INFO)
+    app.logger.addHandler(file_handler)
+    app.logger.setLevel(logging.INFO)
+    app.logger.info('Book Store Management System startup')
 
 # Initialize Flask-Login
 login_manager = LoginManager()
@@ -36,23 +60,51 @@ def load_user(username):
             if user_data:
                 return User(user_data['username'])
     except Error as e:
-        print(f"Error loading user: {e}")
+        app.logger.error(f"Error loading user: {e}")
     return None
 
-# Database connection function
-def get_db_connection():
-    """Create and return a MySQL database connection"""
-    try:
-        connection = mysql.connector.connect(
-            host=app.config['DB_HOST'],
-            user=app.config['DB_USER'],
-            password=app.config['DB_PASSWORD'],
-            database=app.config['DB_NAME']
-        )
-        return connection
-    except Error as e:
-        print(f"Error connecting to MySQL: {e}")
-        return None
+def parse_database_url(url):
+    """Parse DATABASE_URL for cloud deployments"""
+    if url:
+        parsed = urlparse(url)
+        return {
+            'host': parsed.hostname,
+            'user': parsed.username,
+            'password': parsed.password,
+            'database': parsed.path[1:],  # Remove leading slash
+            'port': parsed.port or 3306
+        }
+    return None
+
+# Database connection function with retry logic
+def get_db_connection(retries=3):
+    """Create and return a MySQL database connection with retry logic"""
+    db_config = None
+    if app.config.get('DATABASE_URL'):
+        db_config = parse_database_url(app.config['DATABASE_URL'])
+    else:
+        db_config = {
+            'host': app.config['DB_HOST'],
+            'user': app.config['DB_USER'],
+            'password': app.config['DB_PASSWORD'],
+            'database': app.config['DB_NAME']
+        }
+    
+    for attempt in range(retries):
+        try:
+            connection = mysql.connector.connect(
+                **db_config,
+                connect_timeout=10,
+                autocommit=False
+            )
+            return connection
+        except Error as e:
+            if attempt < retries - 1:
+                time.sleep(2)
+                continue
+            else:
+                app.logger.error(f"Database connection failed after {retries} attempts: {e}")
+                return None
 
 def create_database():
     """Create database if it doesn't exist"""
@@ -135,6 +187,20 @@ def init_db():
 def index():
     """Home page"""
     return render_template('index.html')
+
+@app.route('/health')
+def health_check():
+    """Health check endpoint for deployment monitoring"""
+    try:
+        conn = get_db_connection()
+        if conn:
+            conn.close()
+            return jsonify({'status': 'healthy', 'database': 'connected'}), 200
+        else:
+            return jsonify({'status': 'unhealthy', 'database': 'disconnected'}), 503
+    except Exception as e:
+        app.logger.error(f"Health check failed: {e}")
+        return jsonify({'status': 'unhealthy', 'error': str(e)}), 503
 
 @app.route('/signup', methods=['GET', 'POST'])
 def signup():
@@ -543,6 +609,8 @@ def internal_error(error):
 
 if __name__ == '__main__':
     print("Initializing Book Store Management System...")
-    init_db()
+    if os.getenv('FLASK_ENV') != 'production':
+        init_db()
     print("Starting Flask application...")
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    port = int(os.getenv('PORT', 5000))
+    app.run(debug=app.config['DEBUG'], host='0.0.0.0', port=port)
