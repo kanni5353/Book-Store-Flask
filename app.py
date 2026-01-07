@@ -2,7 +2,7 @@ from flask import Flask, render_template, request, redirect, url_for, flash, ses
 from flask_login import LoginManager, UserMixin, login_user, login_required, logout_user, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
 import mysql.connector
-from mysql.connector import Error
+from mysql.connector import Error, pooling
 from config import Config
 import sys
 import os
@@ -10,8 +10,9 @@ import time
 import logging
 from logging.handlers import RotatingFileHandler
 from urllib.parse import urlparse
-from datetime import datetime
+from datetime import datetime, timedelta
 import random
+import threading
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -78,34 +79,83 @@ def parse_database_url(url):
         }
     return None
 
+# Global connection pool (singleton pattern)
+_connection_pool = None
+_pool_lock = threading.Lock()
+
+def get_connection_pool():
+    """Get or create connection pool (singleton pattern)"""
+    global _connection_pool
+    
+    if _connection_pool is None:
+        with _pool_lock:
+            if _connection_pool is None:  # Double-check locking
+                db_config = None
+                if app.config.get('DATABASE_URL'):
+                    db_config = parse_database_url(app.config['DATABASE_URL'])
+                else:
+                    db_config = {
+                        'host': app.config['DB_HOST'],
+                        'user': app.config['DB_USER'],
+                        'password': app.config['DB_PASSWORD'],
+                        'database': app.config['DB_NAME']
+                    }
+                
+                # Create connection pool
+                _connection_pool = pooling.MySQLConnectionPool(
+                    pool_name="bookstore_pool",
+                    pool_size=10,  # Reuse up to 10 connections
+                    pool_reset_session=True,
+                    **db_config,
+                    connect_timeout=10,
+                    autocommit=False
+                )
+                app.logger.info("MySQL connection pool created successfully")
+    
+    return _connection_pool
+
+# Cache for book details (expires after 5 minutes)
+_book_cache = {}
+_cache_lock_book = threading.Lock()
+CACHE_DURATION = timedelta(minutes=5)
+
+def get_cached_book(book_id):
+    """Get book from cache if available and not expired"""
+    with _cache_lock_book:
+        if book_id in _book_cache:
+            book, timestamp = _book_cache[book_id]
+            if datetime.now() - timestamp < CACHE_DURATION:
+                return book
+            else:
+                # Cache expired, remove it
+                del _book_cache[book_id]
+    return None
+
+def cache_book(book_id, book_data):
+    """Store book in cache"""
+    with _cache_lock_book:
+        _book_cache[book_id] = (book_data, datetime.now())
+
+def clear_book_cache():
+    """Clear all cached books (call when stock is updated)"""
+    with _cache_lock_book:
+        _book_cache.clear()
+
 # Database connection function with retry logic
 def get_db_connection(retries=3):
-    """Create and return a MySQL database connection with retry logic"""
-    db_config = None
-    if app.config.get('DATABASE_URL'):
-        db_config = parse_database_url(app.config['DATABASE_URL'])
-    else:
-        db_config = {
-            'host': app.config['DB_HOST'],
-            'user': app.config['DB_USER'],
-            'password': app.config['DB_PASSWORD'],
-            'database': app.config['DB_NAME']
-        }
+    """Get a connection from the pool with retry logic"""
+    pool = get_connection_pool()
     
     for attempt in range(retries):
         try:
-            connection = mysql.connector.connect(
-                **db_config,
-                connect_timeout=10,
-                autocommit=False
-            )
+            connection = pool.get_connection()
             return connection
-        except Error as e:
+        except Exception as e:
             if attempt < retries - 1:
-                time.sleep(2)
+                time.sleep(0.5)  # Short delay before retry
                 continue
             else:
-                app.logger.error(f"Database connection failed after {retries} attempts: {e}")
+                app.logger.error(f"Failed to get connection from pool: {e}")
                 return None
 
 def create_database():
@@ -488,6 +538,9 @@ def sell():
             cursor.close()
             conn.close()
             
+            # Clear cache after sale
+            clear_book_cache()
+            
             flash(f'Sale completed! Transaction ID: {transaction_id}. Total: ₹{total_amount}', 'success')
             return redirect(url_for('sell'))
             
@@ -573,6 +626,10 @@ def add_book():
             conn.commit()
             cursor.close()
             conn.close()
+            
+            # Clear cache after adding new book
+            clear_book_cache()
+            
             flash(f'Book "{book_name}" added successfully!', 'success')
             return redirect(url_for('stock'))
         except Error as e:
@@ -646,6 +703,9 @@ def update_stock():
         cursor.close()
         conn.close()
         
+        # Clear cache after stock update
+        clear_book_cache()
+        
         action_text = 'added to' if action == 'add' else 'subtracted from'
         flash(f'{quantity} units {action_text} "{book["BookName"]}" successfully!', 'success')
         return redirect(url_for('stock'))
@@ -706,27 +766,89 @@ def sales():
 @app.route('/api/book/<book_id>')
 @login_required
 def get_book_details(book_id):
-    """API endpoint to fetch book details for AJAX requests"""
+    """API endpoint to fetch book details for AJAX requests - OPTIMIZED"""
+    
+    # Check cache first
+    cached_book = get_cached_book(book_id)
+    if cached_book:
+        return jsonify({
+            'success': True,
+            'book_name': cached_book['BookName'],
+            'price': cached_book['Price'],
+            'available_quantity': cached_book['Quantity'],
+            'cached': True  # For debugging
+        })
+    
+    # Not in cache, fetch from database
     conn = get_db_connection()
     if not conn:
-        return jsonify({'success': False, 'message': 'Database connection error'}), 500
+        app.logger.error(f"Database connection failed for book {book_id}")
+        return jsonify({
+            'success': False, 
+            'message': 'Database connection error. Please try again.',
+            'error_type': 'connection'
+        }), 503
     
     try:
         cursor = conn.cursor(dictionary=True)
-        cursor.execute("SELECT BookName, Price, Quantity FROM Available_Books WHERE Bookid = %s", (book_id,))
+        cursor.execute(
+            "SELECT BookName, Price, Quantity FROM Available_Books WHERE Bookid = %s", 
+            (book_id,)
+        )
         book = cursor.fetchone()
         cursor.close()
         conn.close()
         
         if book:
+            # Cache the result
+            cache_book(book_id, book)
+            
             return jsonify({
                 'success': True,
                 'book_name': book['BookName'],
                 'price': book['Price'],
-                'available_quantity': book['Quantity']
+                'available_quantity': book['Quantity'],
+                'cached': False
             })
         else:
-            return jsonify({'success': False, 'message': f'Book ID {book_id} not found'}), 404
+            return jsonify({
+                'success': False, 
+                'message': f'Book ID {book_id} not found in inventory.',
+                'error_type': 'not_found'
+            }), 404
+            
+    except Exception as e:
+        app.logger.error(f"Error fetching book {book_id}: {e}")
+        return jsonify({
+            'success': False, 
+            'message': f'Error fetching book details: {str(e)}',
+            'error_type': 'query_error'
+        }), 500
+
+@app.route('/api/books/all')
+@login_required
+def get_all_books():
+    """Fetch all books at once for prefetching/caching"""
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'success': False, 'message': 'Database connection error'}), 503
+    
+    try:
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT Bookid, BookName, Price, Quantity FROM Available_Books WHERE Quantity > 0")
+        books = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        
+        # Cache all books
+        for book in books:
+            cache_book(book['Bookid'], book)
+        
+        return jsonify({
+            'success': True,
+            'books': books,
+            'count': len(books)
+        })
     except Exception as e:
         return jsonify({'success': False, 'message': str(e)}), 500
 
