@@ -18,7 +18,7 @@ class BasicTests(unittest.TestCase):
         """Test home page loads successfully"""
         response = self.app.get('/')
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b'KANNI', response.data)
+        self.assertIn(b'TANI', response.data)
     
     def test_health_check(self):
         """Test health check endpoint"""
@@ -79,6 +79,6 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(app.config.get('SESSION_COOKIE_SAMESITE'), 'Lax')
 
 if __name__ == '__main__':
-    print("Running Basic Tests for KANNI'S BOOK STORE")
+    print("Running Basic Tests for TANI'S BOOK STORE")
     print("=" * 60)
     unittest.main(verbosity=2)

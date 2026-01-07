@@ -1,4 +1,4 @@
-# KANNI'S BOOK STORE - Flask Web Application
+# TANI'S BOOK STORE - Flask Web Application
 
 A complete Book Store Management System built with Flask, MySQL, and Bootstrap 5. This web application provides a modern, user-friendly interface for managing book inventory, processing sales, and tracking business performance.
 
@@ -946,4 +946,4 @@ If you encounter any issues or have questions:
 ---
 
 <p align="center">Made with ❤️ by kanni5353</p>
-<p align="center">KANNI'S BOOK STORE © 2024</p>
+<p align="center">TANI'S BOOK STORE © 2024</p>

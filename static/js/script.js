@@ -1,4 +1,4 @@
-// Custom JavaScript for KANNI'S BOOK STORE
+// Custom JavaScript for TANI'S BOOK STORE
 
 // Auto-dismiss alerts after 5 seconds
 document.addEventListener('DOMContentLoaded', function() {
@@ -253,4 +253,4 @@ function validateQuantity() {
 }
 
 // Console log for debugging (remove in production)
-console.log('KANNI\'S BOOK STORE - Application loaded successfully');
+console.log('TANI\'S BOOK STORE - Application loaded successfully');
