@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+
+{% block title %}Add Book - KANNI'S BOOK STORE{% endblock %}
+
+{% block content %}
+<div class="row mb-4">
+    <div class="col-12">
+        <h2 class="fw-bold">
+            <i class="bi bi-plus-circle text-primary"></i> Add New Book
+        </h2>
+        <p class="text-muted">Add a new book to your inventory</p>
+    </div>
+</div>
+
+<div class="row justify-content-center">
+    <div class="col-lg-8">
+        <div class="card shadow-sm">
+            <div class="card-body p-4">
+                <form method="POST" action="{{ url_for('add_book') }}">
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="book_id" class="form-label">Book ID *</label>
+                            <input type="text" class="form-control" id="book_id" 
+                                   name="book_id" maxlength="10" required 
+                                   placeholder="e.g., BK001">
+                            <div class="form-text">Unique identifier for the book</div>
+                        </div>
+                        
+                        <div class="col-md-6 mb-3">
+                            <label for="book_name" class="form-label">Book Name *</label>
+                            <input type="text" class="form-control" id="book_name" 
+                                   name="book_name" maxlength="30" required 
+                                   placeholder="Enter book name">
+                        </div>
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="genre" class="form-label">Genre</label>
+                            <input type="text" class="form-control" id="genre" 
+                                   name="genre" maxlength="20" 
+                                   placeholder="e.g., Fiction, Science, etc.">
+                        </div>
+                        
+                        <div class="col-md-6 mb-3">
+                            <label for="author" class="form-label">Author</label>
+                            <input type="text" class="form-control" id="author" 
+                                   name="author" maxlength="20" 
+                                   placeholder="Enter author name">
+                        </div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="publication" class="form-label">Publication</label>
+                        <input type="text" class="form-control" id="publication" 
+                               name="publication" maxlength="30" 
+                               placeholder="Enter publication name">
+                    </div>
+                    
+                    <div class="row">
+                        <div class="col-md-6 mb-3">
+                            <label for="quantity" class="form-label">Quantity *</label>
+                            <input type="number" class="form-control" id="quantity" 
+                                   name="quantity" min="0" required 
+                                   placeholder="Enter quantity">
+                        </div>
+                        
+                        <div class="col-md-6 mb-3">
+                            <label for="price" class="form-label">Price (₹) *</label>
+                            <input type="number" class="form-control" id="price" 
+                                   name="price" min="0" required 
+                                   placeholder="Enter price">
+                        </div>
+                    </div>
+                    
+                    <hr class="my-4">
+                    
+                    <div class="d-grid gap-2 d-md-flex justify-content-md-end">
+                        <a href="{{ url_for('stock') }}" class="btn btn-secondary">
+                            <i class="bi bi-x-circle"></i> Cancel
+                        </a>
+                        <button type="submit" class="btn btn-primary">
+                            <i class="bi bi-plus-circle"></i> Add Book
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+        
+        <div class="card mt-4 border-info">
+            <div class="card-body">
+                <h6 class="card-title"><i class="bi bi-info-circle text-info"></i> Tips</h6>
+                <ul class="mb-0 small text-muted">
+                    <li>Book ID must be unique and cannot be changed later</li>
+                    <li>Fields marked with * are required</li>
+                    <li>You can update quantity later from the stock management page</li>
+                    <li>Genre helps in organizing and sorting your inventory</li>
+                </ul>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
