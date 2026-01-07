@@ -19,7 +19,8 @@
                 <h5 class="card-title mb-4">Sales Form</h5>
                 
                 <form method="POST" action="{{ url_for('sell') }}" id="sellForm">
-                    <div class="row">
+                    <!-- Customer Details -->
+                    <div class="row mb-4">
                         <div class="col-md-6 mb-3">
                             <label for="customer_name" class="form-label">Customer Name *</label>
                             <input type="text" class="form-control" id="customer_name" 
@@ -36,28 +37,63 @@
                         </div>
                     </div>
                     
-                    <div class="row">
-                        <div class="col-md-6 mb-3">
-                            <label for="book_id" class="form-label">Book ID *</label>
-                            <input type="text" class="form-control" id="book_id" 
-                                   name="book_id" maxlength="10" required 
-                                   placeholder="Enter book ID" list="bookList">
-                            <datalist id="bookList">
-                                {% for book in books %}
-                                <option value="{{ book.Bookid }}">{{ book.BookName }} (Stock: {{ book.Quantity }})</option>
-                                {% endfor %}
-                            </datalist>
-                            <div class="form-text">Select from available books below</div>
+                    <!-- Book Rows Section -->
+                    <div class="mb-4">
+                        <h6 class="mb-3">Books <span class="text-muted">(Add one or more books)</span></h6>
+                        <div id="bookRows">
+                            <!-- First book row (default) -->
+                            <div class="book-row mb-3 p-3 border rounded" id="bookRow1">
+                                <div class="row">
+                                    <div class="col-md-3 mb-2">
+                                        <label class="form-label small">Book ID *</label>
+                                        <input type="text" name="book_id[]" class="form-control book-id-input" 
+                                               placeholder="Book ID" required onblur="fetchBookDetails(this)" list="bookList">
+                                        <datalist id="bookList">
+                                            {% for book in books %}
+                                            <option value="{{ book.Bookid }}">{{ book.BookName }}</option>
+                                            {% endfor %}
+                                        </datalist>
+                                    </div>
+                                    <div class="col-md-3 mb-2">
+                                        <label class="form-label small">Book Name</label>
+                                        <input type="text" class="form-control book-name-display" 
+                                               placeholder="Book Name" readonly>
+                                    </div>
+                                    <div class="col-md-2 mb-2">
+                                        <label class="form-label small">Quantity *</label>
+                                        <input type="number" name="quantity[]" class="form-control quantity-input" 
+                                               placeholder="Qty" min="1" required oninput="calculateTotal()">
+                                    </div>
+                                    <div class="col-md-2 mb-2">
+                                        <label class="form-label small">Price</label>
+                                        <input type="text" class="form-control price-display" 
+                                               placeholder="Price" readonly>
+                                    </div>
+                                    <div class="col-md-2 mb-2 d-flex align-items-end">
+                                        <!-- First row doesn't have remove button -->
+                                        <div class="w-100" style="height: 38px;"></div>
+                                    </div>
+                                </div>
+                                <div class="row mt-2">
+                                    <div class="col-12">
+                                        <span class="subtotal-display text-muted small">Subtotal: ₹0</span>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                         
-                        <div class="col-md-6 mb-3">
-                            <label for="quantity" class="form-label">Quantity *</label>
-                            <input type="number" class="form-control" id="quantity" 
-                                   name="quantity" min="1" required 
-                                   placeholder="Enter quantity">
-                        </div>
+                        <!-- Add Another Book Button -->
+                        <button type="button" class="btn btn-outline-primary btn-sm" onclick="addBookRow()">
+                            <i class="bi bi-plus-circle"></i> Add Another Book
+                        </button>
                     </div>
                     
+                    <!-- Grand Total Display -->
+                    <div class="alert alert-info mb-4">
+                        <h5 class="mb-0" id="grandTotal">Grand Total: ₹0</h5>
+                    </div>
+                    
+                    <!-- Action Buttons -->
                     <div class="d-grid gap-2 d-md-flex justify-content-md-end mt-4">
                         <a href="{{ url_for('dashboard') }}" class="btn btn-secondary">
                             <i class="bi bi-x-circle"></i> Cancel
@@ -79,7 +115,7 @@
             <div class="card-body p-0">
                 {% if books %}
                 <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
-                    <table class="table table-sm table-hover mb-0">
+                    <table class="table table-sm table-hover mb-0" id="booksTable">
                         <thead class="table-light sticky-top">
                             <tr>
                                 <th>ID</th>
@@ -90,7 +126,11 @@
                         </thead>
                         <tbody>
                             {% for book in books %}
-                            <tr onclick="selectBook('{{ book.Bookid }}')" style="cursor: pointer;">
+                            <tr onclick="selectBook('{{ book.Bookid }}')" style="cursor: pointer;" 
+                                data-bookid="{{ book.Bookid }}" 
+                                data-bookname="{{ book.BookName }}" 
+                                data-price="{{ book.Price }}" 
+                                data-stock="{{ book.Quantity }}">
                                 <td><small>{{ book.Bookid }}</small></td>
                                 <td><small>{{ book.BookName }}</small></td>
                                 <td>
@@ -120,8 +160,165 @@
 
 {% block extra_js %}
 <script>
+// Book row counter
+let bookRowCount = 1;
+
+// Select book from the table
 function selectBook(bookId) {
-    document.getElementById('book_id').value = bookId;
+    // Find the first empty book ID input or the focused one
+    const bookInputs = document.querySelectorAll('.book-id-input');
+    let targetInput = null;
+    
+    // Find the last book input that's in view
+    for (let input of bookInputs) {
+        if (!input.value || input === document.activeElement) {
+            targetInput = input;
+            break;
+        }
+    }
+    
+    // If no empty input found, use the last one
+    if (!targetInput && bookInputs.length > 0) {
+        targetInput = bookInputs[bookInputs.length - 1];
+    }
+    
+    if (targetInput) {
+        targetInput.value = bookId;
+        fetchBookDetails(targetInput);
+    }
 }
+
+// Add new book row
+function addBookRow() {
+    bookRowCount++;
+    const bookRows = document.getElementById('bookRows');
+    const newRow = document.createElement('div');
+    newRow.className = 'book-row mb-3 p-3 border rounded';
+    newRow.id = `bookRow${bookRowCount}`;
+    newRow.innerHTML = `
+        <div class="row">
+            <div class="col-md-3 mb-2">
+                <label class="form-label small">Book ID *</label>
+                <input type="text" name="book_id[]" class="form-control book-id-input" 
+                       placeholder="Book ID" required onblur="fetchBookDetails(this)" list="bookList">
+            </div>
+            <div class="col-md-3 mb-2">
+                <label class="form-label small">Book Name</label>
+                <input type="text" class="form-control book-name-display" 
+                       placeholder="Book Name" readonly>
+            </div>
+            <div class="col-md-2 mb-2">
+                <label class="form-label small">Quantity *</label>
+                <input type="number" name="quantity[]" class="form-control quantity-input" 
+                       placeholder="Qty" min="1" required oninput="calculateTotal()">
+            </div>
+            <div class="col-md-2 mb-2">
+                <label class="form-label small">Price</label>
+                <input type="text" class="form-control price-display" 
+                       placeholder="Price" readonly>
+            </div>
+            <div class="col-md-2 mb-2 d-flex align-items-end">
+                <button type="button" class="btn btn-danger btn-sm w-100" onclick="removeBookRow(${bookRowCount})">
+                    <i class="bi bi-trash"></i> Remove
+                </button>
+            </div>
+        </div>
+        <div class="row mt-2">
+            <div class="col-12">
+                <span class="subtotal-display text-muted small">Subtotal: ₹0</span>
+            </div>
+        </div>
+    `;
+    bookRows.appendChild(newRow);
+}
+
+// Remove book row
+function removeBookRow(rowId) {
+    const row = document.getElementById(`bookRow${rowId}`);
+    if (row) {
+        row.remove();
+        calculateTotal();
+    }
+}
+
+// Fetch book details via AJAX
+function fetchBookDetails(input) {
+    const bookId = input.value.trim();
+    if (!bookId) return;
+    
+    const row = input.closest('.book-row');
+    
+    // Fetch book details via AJAX
+    fetch(`/api/book/${bookId}`)
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                row.querySelector('.book-name-display').value = data.book_name;
+                row.querySelector('.price-display').value = data.price;
+                
+                // Show stock warning if low
+                if (data.available_quantity < 10) {
+                    alert(`Warning: Only ${data.available_quantity} units available for ${data.book_name}`);
+                }
+                
+                calculateTotal();
+            } else {
+                alert(data.message || 'Book not found');
+                input.value = '';
+                row.querySelector('.book-name-display').value = '';
+                row.querySelector('.price-display').value = '';
+                calculateTotal();
+            }
+        })
+        .catch(error => {
+            console.error('Error:', error);
+            alert('Error fetching book details. Please try again.');
+        });
+}
+
+// Calculate subtotals and grand total
+function calculateTotal() {
+    let grandTotal = 0;
+    const bookRows = document.querySelectorAll('.book-row');
+    
+    bookRows.forEach(row => {
+        const quantity = parseInt(row.querySelector('.quantity-input').value) || 0;
+        const priceStr = row.querySelector('.price-display').value || '0';
+        const price = parseInt(priceStr) || 0;
+        const subtotal = quantity * price;
+        
+        row.querySelector('.subtotal-display').textContent = `Subtotal: ₹${subtotal}`;
+        grandTotal += subtotal;
+    });
+    
+    document.getElementById('grandTotal').textContent = `Grand Total: ₹${grandTotal}`;
+}
+
+// Form validation before submit
+document.getElementById('sellForm').addEventListener('submit', function(e) {
+    const bookIds = [];
+    const bookInputs = document.querySelectorAll('.book-id-input');
+    
+    // Check for duplicate book IDs
+    for (let input of bookInputs) {
+        const bookId = input.value.trim();
+        if (bookId) {
+            if (bookIds.includes(bookId)) {
+                e.preventDefault();
+                alert(`Duplicate book ID detected: ${bookId}. Each book can only be added once per transaction.`);
+                input.focus();
+                return;
+            }
+            bookIds.push(bookId);
+        }
+    }
+    
+    // Check if at least one book is added
+    if (bookIds.length === 0) {
+        e.preventDefault();
+        alert('Please add at least one book to the transaction.');
+        return;
+    }
+});
 </script>
 {% endblock %}
