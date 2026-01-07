@@ -77,6 +77,7 @@
                                 <div class="row mt-2">
                                     <div class="col-12">
                                         <span class="subtotal-display text-muted small">Subtotal: ₹0</span>
+                                        <div class="stock-warning-display"></div>
                                     </div>
                                 </div>
                             </div>
@@ -226,6 +227,7 @@ function addBookRow() {
         <div class="row mt-2">
             <div class="col-12">
                 <span class="subtotal-display text-muted small">Subtotal: ₹0</span>
+                <div class="stock-warning-display"></div>
             </div>
         </div>
     `;
@@ -278,16 +280,17 @@ function fetchBookDetails(input) {
                     console.log(`Book ${bookId} loaded from cache`);
                 }
                 
-                // Show stock warning if low
+                // Show stock warning if low (using dedicated container to avoid interference)
+                const warningDiv = row.querySelector('.stock-warning-display');
                 if (data.available_quantity < 10) {
-                    const msg = `Warning: Only ${data.available_quantity} units available for ${data.book_name}`;
-                    // Show as small badge instead of alert (less intrusive)
-                    row.querySelector('.subtotal-display').innerHTML = 
-                        `<span class="badge bg-warning text-dark">${msg}</span>`;
-                    setTimeout(() => calculateTotal(), 100);
+                    const msg = `Warning: Only ${data.available_quantity} units available`;
+                    warningDiv.innerHTML = `<small><span class="badge bg-warning text-dark">${msg}</span></small>`;
                 } else {
-                    calculateTotal();
+                    warningDiv.innerHTML = '';
                 }
+                
+                // Small delay to ensure DOM updates before calculating total
+                setTimeout(() => calculateTotal(), 50);
             } else {
                 throw new Error(data.message || 'Book not found');
             }

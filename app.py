@@ -101,16 +101,17 @@ def get_connection_pool():
                         'database': app.config['DB_NAME']
                     }
                 
-                # Create connection pool
+                # Create connection pool with configurable pool size
+                pool_size = int(os.getenv('DB_POOL_SIZE', '10'))
                 _connection_pool = pooling.MySQLConnectionPool(
                     pool_name="bookstore_pool",
-                    pool_size=10,  # Reuse up to 10 connections
+                    pool_size=pool_size,  # Configurable via DB_POOL_SIZE env var
                     pool_reset_session=True,
                     **db_config,
                     connect_timeout=10,
                     autocommit=False
                 )
-                app.logger.info("MySQL connection pool created successfully")
+                app.logger.info(f"MySQL connection pool created successfully with size {pool_size}")
     
     return _connection_pool
 
