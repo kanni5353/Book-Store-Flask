@@ -56,16 +56,16 @@ document.addEventListener('DOMContentLoaded', function() {
 document.addEventListener('DOMContentLoaded', function() {
     const bookIdInput = document.getElementById('book_id');
     if (bookIdInput) {
-        // Store book data from page
+        // Store book data from page using data attributes or table structure
         const bookData = {};
-        const bookRows = document.querySelectorAll('[onclick^="selectBook"]');
+        const bookRows = document.querySelectorAll('tr[style*="cursor: pointer"]');
         bookRows.forEach(function(row) {
-            const bookId = row.getAttribute('onclick').match(/'([^']+)'/)[1];
             const cells = row.querySelectorAll('td');
-            if (cells.length >= 3) {
+            if (cells.length >= 4) {
+                const bookId = cells[0].textContent.trim();
                 bookData[bookId] = {
                     name: cells[1].textContent.trim(),
-                    stock: parseInt(cells[2].textContent.trim()),
+                    stock: parseInt(cells[2].querySelector('.badge')?.textContent.trim() || '0'),
                     price: cells[3].textContent.trim()
                 };
             }
@@ -114,6 +114,8 @@ function showStockInfo(bookName, stock, price) {
 }
 
 // Table search/filter functionality
+let tableSearchCounter = 0;
+
 document.addEventListener('DOMContentLoaded', function() {
     // Add search box to tables if they have more than 5 rows
     const tables = document.querySelectorAll('table.table');
@@ -131,13 +133,16 @@ function addSearchToTable(table) {
         return;
     }
     
+    // Create unique ID using counter
+    const searchId = 'tableSearch_' + (++tableSearchCounter);
+    
     // Create search input
     const searchContainer = document.createElement('div');
     searchContainer.className = 'mb-3 table-search-box';
     searchContainer.innerHTML = `
         <div class="input-group">
             <span class="input-group-text"><i class="bi bi-search"></i></span>
-            <input type="text" class="form-control" placeholder="Search table..." id="tableSearch_${Date.now()}">
+            <input type="text" class="form-control" placeholder="Search table..." id="${searchId}">
         </div>
     `;
     
@@ -212,16 +217,19 @@ function validateQuantity() {
     const quantity = parseInt(quantityInput.value);
     const bookId = bookIdInput.value.trim();
     
-    // Get stock from the table
-    const bookRows = document.querySelectorAll('[onclick^="selectBook"]');
+    // Get stock from the table using table structure instead of onclick attribute
+    const bookRows = document.querySelectorAll('tr[style*="cursor: pointer"]');
     let availableStock = null;
     
     bookRows.forEach(function(row) {
-        const rowBookId = row.getAttribute('onclick').match(/'([^']+)'/)[1];
-        if (rowBookId === bookId) {
-            const stockBadge = row.querySelector('.badge');
-            if (stockBadge) {
-                availableStock = parseInt(stockBadge.textContent.trim());
+        const cells = row.querySelectorAll('td');
+        if (cells.length >= 3) {
+            const rowBookId = cells[0].textContent.trim();
+            if (rowBookId === bookId) {
+                const stockBadge = cells[2].querySelector('.badge');
+                if (stockBadge) {
+                    availableStock = parseInt(stockBadge.textContent.trim());
+                }
             }
         }
     });

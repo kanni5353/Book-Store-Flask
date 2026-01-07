@@ -109,16 +109,32 @@ def get_db_connection(retries=3):
 def create_database():
     """Create database if it doesn't exist"""
     try:
-        connection = mysql.connector.connect(
-            host=app.config['DB_HOST'],
-            user=app.config['DB_USER'],
-            password=app.config['DB_PASSWORD']
-        )
+        db_config = None
+        db_name = None
+        
+        if app.config.get('DATABASE_URL'):
+            parsed = parse_database_url(app.config['DATABASE_URL'])
+            db_name = parsed['database']
+            db_config = {
+                'host': parsed['host'],
+                'user': parsed['user'],
+                'password': parsed['password'],
+                'port': parsed.get('port', 3306)
+            }
+        else:
+            db_name = app.config['DB_NAME']
+            db_config = {
+                'host': app.config['DB_HOST'],
+                'user': app.config['DB_USER'],
+                'password': app.config['DB_PASSWORD']
+            }
+        
+        connection = mysql.connector.connect(**db_config)
         cursor = connection.cursor()
-        cursor.execute(f"CREATE DATABASE IF NOT EXISTS {app.config['DB_NAME']}")
+        cursor.execute(f"CREATE DATABASE IF NOT EXISTS {db_name}")
         cursor.close()
         connection.close()
-        print(f"Database '{app.config['DB_NAME']}' created or already exists.")
+        print(f"Database '{db_name}' created or already exists.")
     except Error as e:
         print(f"Error creating database: {e}")
         sys.exit(1)
