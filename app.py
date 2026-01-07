@@ -90,28 +90,42 @@ def get_connection_pool():
     if _connection_pool is None:
         with _pool_lock:
             if _connection_pool is None:  # Double-check locking
-                db_config = None
-                if app.config.get('DATABASE_URL'):
-                    db_config = parse_database_url(app.config['DATABASE_URL'])
-                else:
-                    db_config = {
-                        'host': app.config['DB_HOST'],
-                        'user': app.config['DB_USER'],
-                        'password': app.config['DB_PASSWORD'],
-                        'database': app.config['DB_NAME']
-                    }
-                
-                # Create connection pool with configurable pool size
-                pool_size = int(os.getenv('DB_POOL_SIZE', '10'))
-                _connection_pool = pooling.MySQLConnectionPool(
-                    pool_name="bookstore_pool",
-                    pool_size=pool_size,  # Configurable via DB_POOL_SIZE env var
-                    pool_reset_session=True,
-                    **db_config,
-                    connect_timeout=10,
-                    autocommit=False
-                )
-                app.logger.info(f"MySQL connection pool created successfully with size {pool_size}")
+                try:
+                    db_config = None
+                    if app.config.get('DATABASE_URL'):
+                        db_config = parse_database_url(app.config['DATABASE_URL'])
+                    else:
+                        db_config = {
+                            'host': app.config['DB_HOST'],
+                            'user': app.config['DB_USER'],
+                            'password': app.config['DB_PASSWORD'],
+                            'database': app.config['DB_NAME']
+                        }
+                    
+                    # Create connection pool with configurable pool size
+                    try:
+                        pool_size = int(os.getenv('DB_POOL_SIZE', '10'))
+                        if pool_size < 1 or pool_size > 100:
+                            app.logger.warning(f"Invalid DB_POOL_SIZE {pool_size}, using default 10")
+                            pool_size = 10
+                    except (ValueError, TypeError):
+                        app.logger.warning("DB_POOL_SIZE must be a number, using default 10")
+                        pool_size = 10
+                    
+                    _connection_pool = pooling.MySQLConnectionPool(
+                        pool_name="bookstore_pool",
+                        pool_size=pool_size,
+                        pool_reset_session=True,
+                        **db_config,
+                        connect_timeout=10,
+                        autocommit=False
+                    )
+                    app.logger.info(f"MySQL connection pool created successfully with size {pool_size}")
+                except Exception as e:
+                    app.logger.error(f"Failed to create connection pool: {e}")
+                    app.logger.error("Please check your database configuration (host, user, password, database name)")
+                    # Don't set _connection_pool, let it remain None so get_db_connection can handle it
+                    raise
     
     return _connection_pool
 

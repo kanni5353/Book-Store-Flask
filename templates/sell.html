@@ -289,8 +289,8 @@ function fetchBookDetails(input) {
                     warningDiv.innerHTML = '';
                 }
                 
-                // Small delay to ensure DOM updates before calculating total
-                setTimeout(() => calculateTotal(), 50);
+                // Use Promise to ensure DOM updates are complete before calculating
+                Promise.resolve().then(() => calculateTotal());
             } else {
                 throw new Error(data.message || 'Book not found');
             }
