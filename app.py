@@ -10,6 +10,8 @@ import time
 import logging
 from logging.handlers import RotatingFileHandler
 from urllib.parse import urlparse
+from datetime import datetime
+import random
 
 # Initialize Flask app
 app = Flask(__name__)
@@ -176,6 +178,7 @@ def init_db():
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS Sales (
                 id INT AUTO_INCREMENT PRIMARY KEY,
+                transaction_id VARCHAR(50) NOT NULL,
                 CustomerName VARCHAR(20) NOT NULL,
                 PhoneNumber CHAR(10) NOT NULL,
                 Bookid VARCHAR(10),
@@ -183,9 +186,28 @@ def init_db():
                 Quantity INT NOT NULL,
                 Price INT NOT NULL,
                 SaleDate TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (Bookid) REFERENCES Available_Books(Bookid) ON DELETE SET NULL
+                FOREIGN KEY (Bookid) REFERENCES Available_Books(Bookid) ON DELETE SET NULL,
+                INDEX idx_transaction (transaction_id)
             )
         """)
+        
+        # Migrate existing records without transaction_id
+        cursor.execute("""
+            SELECT COUNT(*) FROM information_schema.COLUMNS 
+            WHERE TABLE_SCHEMA = DATABASE() 
+            AND TABLE_NAME = 'Sales' 
+            AND COLUMN_NAME = 'transaction_id'
+        """)
+        column_exists = cursor.fetchone()[0] > 0
+        
+        if column_exists:
+            # Update existing records that have NULL or empty transaction_id
+            cursor.execute("""
+                UPDATE Sales 
+                SET transaction_id = CONCAT('TXN-LEGACY-', id) 
+                WHERE transaction_id IS NULL OR transaction_id = ''
+            """)
+            conn.commit()
         
         conn.commit()
         print("Database tables initialized successfully.")
@@ -354,26 +376,22 @@ def sell():
     if request.method == 'POST':
         customer_name = request.form.get('customer_name', '').strip()
         phone_number = request.form.get('phone_number', '').strip()
-        book_id = request.form.get('book_id', '').strip()
-        quantity = request.form.get('quantity', '').strip()
+        
+        # Get all book entries (multiple books)
+        book_ids = request.form.getlist('book_id[]')
+        quantities = request.form.getlist('quantity[]')
         
         # Validation
-        if not all([customer_name, phone_number, book_id, quantity]):
-            flash('All fields are required.', 'error')
+        if not all([customer_name, phone_number, book_ids]):
+            flash('Customer details and at least one book are required.', 'error')
             return redirect(url_for('sell'))
         
         if not phone_number.isdigit() or len(phone_number) != 10:
             flash('Phone number must be exactly 10 digits.', 'error')
             return redirect(url_for('sell'))
         
-        try:
-            quantity = int(quantity)
-            if quantity <= 0:
-                flash('Quantity must be greater than 0.', 'error')
-                return redirect(url_for('sell'))
-        except ValueError:
-            flash('Invalid quantity.', 'error')
-            return redirect(url_for('sell'))
+        # Generate unique transaction ID
+        transaction_id = f"TXN-{datetime.now().strftime('%Y%m%d')}-{random.randint(1000, 9999)}"
         
         if not conn:
             flash('Database connection error. Please try again.', 'error')
@@ -381,44 +399,94 @@ def sell():
         
         try:
             cursor = conn.cursor(dictionary=True)
+            total_amount = 0
+            books_to_sell = []
             
-            # Check if book exists and has sufficient stock
-            cursor.execute("SELECT * FROM Available_Books WHERE Bookid = %s", (book_id,))
-            book = cursor.fetchone()
+            # Filter out empty book entries and check for duplicates
+            valid_book_ids = []
+            valid_quantities = []
+            for book_id, quantity in zip(book_ids, quantities):
+                if book_id and book_id.strip() and quantity and quantity.strip():
+                    book_id = book_id.strip()
+                    if book_id in valid_book_ids:
+                        flash(f'Duplicate book ID {book_id} detected. Each book can only be added once per transaction.', 'error')
+                        cursor.close()
+                        conn.close()
+                        return redirect(url_for('sell'))
+                    valid_book_ids.append(book_id)
+                    valid_quantities.append(quantity.strip())
             
-            if not book:
-                flash(f'Book with ID {book_id} not found.', 'error')
+            if not valid_book_ids:
+                flash('At least one book is required.', 'error')
                 cursor.close()
                 conn.close()
                 return redirect(url_for('sell'))
             
-            if book['Quantity'] < quantity:
-                flash(f'Insufficient stock. Available: {book["Quantity"]}, Requested: {quantity}', 'error')
-                cursor.close()
-                conn.close()
-                return redirect(url_for('sell'))
+            # Validate all books first
+            for book_id, quantity in zip(valid_book_ids, valid_quantities):
+                try:
+                    quantity = int(quantity)
+                    if quantity <= 0:
+                        flash(f'Quantity for Book ID {book_id} must be greater than 0.', 'error')
+                        cursor.close()
+                        conn.close()
+                        return redirect(url_for('sell'))
+                except ValueError:
+                    flash(f'Invalid quantity for Book ID {book_id}.', 'error')
+                    cursor.close()
+                    conn.close()
+                    return redirect(url_for('sell'))
+                
+                # Check stock
+                cursor.execute("SELECT * FROM Available_Books WHERE Bookid = %s", (book_id,))
+                book = cursor.fetchone()
+                
+                if not book:
+                    flash(f'Book ID {book_id} not found.', 'error')
+                    cursor.close()
+                    conn.close()
+                    return redirect(url_for('sell'))
+                
+                if book['Quantity'] < quantity:
+                    flash(f'Insufficient stock for {book["BookName"]}. Available: {book["Quantity"]}, Requested: {quantity}', 'error')
+                    cursor.close()
+                    conn.close()
+                    return redirect(url_for('sell'))
+                
+                books_to_sell.append({
+                    'book_id': book_id,
+                    'book_name': book['BookName'],
+                    'quantity': quantity,
+                    'price': book['Price']
+                })
+                total_amount += book['Price'] * quantity
             
-            # Insert sale record
-            cursor.execute("""
-                INSERT INTO Sales (CustomerName, PhoneNumber, Bookid, BookName, Quantity, Price)
-                VALUES (%s, %s, %s, %s, %s, %s)
-            """, (customer_name, phone_number, book_id, book['BookName'], quantity, book['Price']))
-            
-            # Update book quantity
-            new_quantity = book['Quantity'] - quantity
-            cursor.execute("UPDATE Available_Books SET Quantity = %s WHERE Bookid = %s", 
-                         (new_quantity, book_id))
+            # Insert all sales records with same transaction_id
+            for book in books_to_sell:
+                cursor.execute("""
+                    INSERT INTO Sales (transaction_id, CustomerName, PhoneNumber, Bookid, BookName, Quantity, Price)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                """, (transaction_id, customer_name, phone_number, book['book_id'], 
+                      book['book_name'], book['quantity'], book['price']))
+                
+                # Update stock
+                cursor.execute("""
+                    UPDATE Available_Books 
+                    SET Quantity = Quantity - %s 
+                    WHERE Bookid = %s
+                """, (book['quantity'], book['book_id']))
             
             conn.commit()
             cursor.close()
             conn.close()
             
-            flash(f'Sale completed successfully! Total: ₹{book["Price"] * quantity}', 'success')
+            flash(f'Sale completed! Transaction ID: {transaction_id}. Total: ₹{total_amount}', 'success')
             return redirect(url_for('sell'))
             
-        except Error as e:
+        except Exception as e:
             flash(f'Error processing sale: {str(e)}', 'error')
             if conn:
+                conn.rollback()
                 conn.close()
             return redirect(url_for('sell'))
     
@@ -583,32 +651,76 @@ def update_stock():
 @app.route('/sales')
 @login_required
 def sales():
-    """View all sales records"""
+    """View all sales records grouped by transaction"""
     conn = get_db_connection()
-    sales_records = []
+    transactions = {}
     total_sales = 0
     
     if conn:
         try:
             cursor = conn.cursor(dictionary=True)
             cursor.execute("""
-                SELECT CustomerName, PhoneNumber, BookName, Quantity, Price, 
-                       (Quantity * Price) as Total, SaleDate
+                SELECT transaction_id, CustomerName, PhoneNumber, BookName, 
+                       Quantity, Price, (Quantity * Price) as Subtotal, SaleDate
                 FROM Sales 
-                ORDER BY SaleDate DESC
+                ORDER BY SaleDate DESC, transaction_id DESC
             """)
             sales_records = cursor.fetchall()
             
-            # Calculate total sales
-            cursor.execute("SELECT COALESCE(SUM(Price * Quantity), 0) as total FROM Sales")
-            total_sales = cursor.fetchone()['total']
+            # Group by transaction_id
+            for record in sales_records:
+                txn_id = record['transaction_id']
+                if txn_id not in transactions:
+                    transactions[txn_id] = {
+                        'customer_name': record['CustomerName'],
+                        'phone_number': record['PhoneNumber'],
+                        'sale_date': record['SaleDate'],
+                        'books': [],
+                        'total': 0
+                    }
+                
+                transactions[txn_id]['books'].append({
+                    'book_name': record['BookName'],
+                    'quantity': record['Quantity'],
+                    'price': record['Price'],
+                    'subtotal': record['Subtotal']
+                })
+                transactions[txn_id]['total'] += record['Subtotal']
+                total_sales += record['Subtotal']
             
             cursor.close()
             conn.close()
         except Error as e:
             flash(f'Error fetching sales: {str(e)}', 'error')
     
-    return render_template('sales.html', sales=sales_records, total_sales=total_sales)
+    return render_template('sales.html', transactions=transactions, total_sales=total_sales)
+
+@app.route('/api/book/<book_id>')
+@login_required
+def get_book_details(book_id):
+    """API endpoint to fetch book details for AJAX requests"""
+    conn = get_db_connection()
+    if not conn:
+        return jsonify({'success': False, 'message': 'Database connection error'}), 500
+    
+    try:
+        cursor = conn.cursor(dictionary=True)
+        cursor.execute("SELECT BookName, Price, Quantity FROM Available_Books WHERE Bookid = %s", (book_id,))
+        book = cursor.fetchone()
+        cursor.close()
+        conn.close()
+        
+        if book:
+            return jsonify({
+                'success': True,
+                'book_name': book['BookName'],
+                'price': book['Price'],
+                'available_quantity': book['Quantity']
+            })
+        else:
+            return jsonify({'success': False, 'message': f'Book ID {book_id} not found'}), 404
+    except Exception as e:
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 # Error handlers
 @app.errorhandler(404)
