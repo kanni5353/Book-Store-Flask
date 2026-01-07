@@ -77,6 +77,7 @@
                                 <div class="row mt-2">
                                     <div class="col-12">
                                         <span class="subtotal-display text-muted small">Subtotal: ₹0</span>
+                                        <div class="stock-warning-display"></div>
                                     </div>
                                 </div>
                             </div>
@@ -226,6 +227,7 @@ function addBookRow() {
         <div class="row mt-2">
             <div class="col-12">
                 <span class="subtotal-display text-muted small">Subtotal: ₹0</span>
+                <div class="stock-warning-display"></div>
             </div>
         </div>
     `;
@@ -254,11 +256,17 @@ function fetchBookDetails(input) {
     nameInput.value = 'Loading...';
     priceInput.value = '...';
     
-    // Fetch book details via AJAX
-    fetch(`/api/book/${bookId}`)
+    // Fetch book details via AJAX with timeout
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);  // 10 second timeout
+    
+    fetch(`/api/book/${bookId}`, { signal: controller.signal })
         .then(response => {
+            clearTimeout(timeoutId);
             if (!response.ok) {
-                throw new Error('Book not found');
+                return response.json().then(data => {
+                    throw new Error(data.message || 'Book not found');
+                });
             }
             return response.json();
         })
@@ -267,25 +275,43 @@ function fetchBookDetails(input) {
                 nameInput.value = data.book_name;
                 priceInput.value = data.price;
                 
-                // Show stock warning if low
-                if (data.available_quantity < 10) {
-                    alert(`Warning: Only ${data.available_quantity} units available for ${data.book_name}`);
+                // Show cache indicator (for debugging)
+                if (data.cached) {
+                    console.log(`Book ${bookId} loaded from cache`);
                 }
                 
-                calculateTotal();
+                // Show stock warning if low (using dedicated container to avoid interference)
+                const warningDiv = row.querySelector('.stock-warning-display');
+                if (data.available_quantity < 10) {
+                    const msg = `Warning: Only ${data.available_quantity} units available`;
+                    warningDiv.innerHTML = `<small><span class="badge bg-warning text-dark">${msg}</span></small>`;
+                } else {
+                    warningDiv.innerHTML = '';
+                }
+                
+                // Use Promise to ensure DOM updates are complete before calculating
+                Promise.resolve().then(() => calculateTotal());
             } else {
-                alert(data.message || 'Book not found');
-                nameInput.value = '';
-                priceInput.value = '';
-                input.value = '';
+                throw new Error(data.message || 'Book not found');
             }
         })
         .catch(error => {
+            clearTimeout(timeoutId);
             console.error('Error:', error);
-            alert('Error fetching book details. Please check Book ID.');
+            
+            // Better error messages
+            let errorMsg = 'Error fetching book details.';
+            if (error.name === 'AbortError') {
+                errorMsg = 'Request timed out. Please check your connection and try again.';
+            } else if (error.message) {
+                errorMsg = error.message;
+            }
+            
+            alert(errorMsg);
             nameInput.value = '';
             priceInput.value = '';
             input.value = '';
+            input.focus();
         });
 }
 
@@ -332,6 +358,20 @@ document.getElementById('sellForm').addEventListener('submit', function(e) {
         alert('Please add at least one book to the transaction.');
         return;
     }
+});
+
+// Prefetch all books when page loads for instant auto-fill
+window.addEventListener('DOMContentLoaded', function() {
+    fetch('/api/books/all')
+        .then(response => response.json())
+        .then(data => {
+            if (data.success) {
+                console.log(`Prefetched ${data.count} books for instant auto-fill`);
+            }
+        })
+        .catch(error => {
+            console.error('Error prefetching books:', error);
+        });
 });
 </script>
 {% endblock %}
